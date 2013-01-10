@@ -25,6 +25,7 @@ THE SOFTWARE.
 #include <time.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 
 #define RCFS_MAGIC "r-c-f-s"
 #define RCFS_SUPERBLOCK_OFF 0x1020
@@ -32,6 +33,7 @@ THE SOFTWARE.
 #define EXTRACT_FILE 1
 #define LIST_FILE 2
 #define PRINT_INFO 3
+#define DUMP_FILES 4
 
 
 extern int lzo1x_decompress_safe(const unsigned char *in, size_t in_len, unsigned char *out, size_t *out_len);
@@ -231,6 +233,8 @@ int main(int argc, char *argv[])
             cmd = LIST_FILE;
         if (strcmp(argv[1], "-p") == 0 )
             cmd = PRINT_INFO;
+        if (strcmp(argv[1], "-d") == 0 )
+            cmd = DUMP_FILES;
         
         if(cmd)
             argsvalid = 1;
@@ -238,10 +242,11 @@ int main(int argc, char *argv[])
     
     if ( !argsvalid ) {
         printf("Usage: \n");
-        printf("       %s {-e|-l|-p} image.bin {filename}\n", argv[0]);
+        printf("       %s {-e|-l|-p|-d} image.bin {filename}\n", argv[0]);
         printf("       %s -e image.bin filename		- extracts filename\n", argv[0]);
         printf("       %s -l image.bin			- lists all files and directories\n", argv[0]);
         printf("       %s -p image.bin			- prints superblock information\n", argv[0]);
+        printf("       %s -d image.bin          - dumps all files and directories\n", argv[0]);
         exit(1);
     }
     
@@ -267,6 +272,40 @@ int main(int argc, char *argv[])
         case LIST_FILE:
             rcfs_list_files(p);
             break;
+        case DUMP_FILES:
+        {
+            int i,loc,len;
+            char filename[1024] = {0};
+            char folder[1024] = {0};
+            char destination[2048] = {0};
+            __uint8_t *fdata;
+            FILE *outfile;
+
+            strcpy(folder, argv[2]);
+            loc = strrchr(folder,'.');
+            if (loc)
+                loc = 0;
+            mkdir(folder, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+            for(i=0;i < p->ninodes; i++)
+            {
+                fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
+                fread(filename, 1, 100, p->fp);
+                printf("Extracting %s...\n", filename);
+                fdata = malloc(p->inodes[i].size);
+                len = rcfs_read_file(p, i, fdata);
+                if(len > 0)
+                {
+                    sprintf(destination, "%s/%s", folder, filename);
+                    outfile = fopen(destination, "w");
+                    fwrite(fdata, 1, len, outfile);
+                    fclose(outfile);
+                } else {
+                    printf("Failed to decompress file\n");
+                }
+            }
+            free(fdata);
+            break;
+        }
         case EXTRACT_FILE:
 		{
 			int len = 0;
