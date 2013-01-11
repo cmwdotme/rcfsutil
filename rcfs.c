@@ -86,6 +86,12 @@ typedef struct rcfs
 } rcfs_s;
 
 /*
+ * Flags used by RCFS
+ */
+// 1 << 46
+#define RCFS_DIRECTORY 0x400000000000
+
+/*
  * Open rcfs image
  */
 rcfs_s *rcfs_open(char *filename)
@@ -292,7 +298,7 @@ int main(int argc, char *argv[])
                 fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
                 fread(filename, 1, 100, p->fp);
                 sprintf(destination, "%s/%s", folder, filename);
-                if(p->inodes[i].flags & 0x400000000000) // Directory: 1<<46
+                if(p->inodes[i].flags & RCFS_DIRECTORY)
                 {
                     ext = strrchr(folder,'/');
                     if (!ext)
