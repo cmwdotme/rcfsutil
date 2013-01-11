@@ -274,7 +274,8 @@ int main(int argc, char *argv[])
             break;
         case DUMP_FILES:
         {
-            int i,loc,len;
+            int i,len;
+            char* ext;
             char filename[1024] = {0};
             char folder[1024] = {0};
             char destination[2048] = {0};
@@ -282,12 +283,27 @@ int main(int argc, char *argv[])
             FILE *outfile;
 
             strcpy(folder, argv[2]);
-            loc = strrchr(folder,'.');
-            if (loc)
-                loc = 0;
+            ext = strrchr(folder,'.');
+            if (ext)
+                folder[ext-folder] = '\0';
             mkdir(folder, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
             for(i=0;i < p->ninodes; i++)
             {
+                fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
+                fread(filename, 1, 100, p->fp);
+                sprintf(destination, "%s/%s", folder, filename);
+                if(p->inodes[i].flags & 0x400000000000) // Directory: 1<<46
+                {
+                    ext = strrchr(folder,'/');
+                    if (!ext)
+                        ext = filename;
+                    if (strlen(ext) > 1 && strcmp(ext,".") != 0 && strcmp(ext,"..") != 0)
+                    {
+                        mkdir(destination, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+                        printf("Creating %s\n", filename);
+                    }
+                    continue;
+                }
                 fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
                 fread(filename, 1, 100, p->fp);
                 printf("Extracting %s...\n", filename);
@@ -295,7 +311,6 @@ int main(int argc, char *argv[])
                 len = rcfs_read_file(p, i, fdata);
                 if(len > 0)
                 {
-                    sprintf(destination, "%s/%s", folder, filename);
                     outfile = fopen(destination, "w");
                     fwrite(fdata, 1, len, outfile);
                     fclose(outfile);
