@@ -150,11 +150,12 @@ void rcfs_close(rcfs_s *p)
  */
 size_t rcfs_read_chunk(rcfs_s *p, __uint8_t *buffer, size_t size, __uint32_t offset)
 {
-    unsigned char *inbuffer[0x4000] = {0};
+    unsigned char *inbuffer = malloc(size);
     size_t outlen = 0x4000;
     int ret;
 	ret = fread(inbuffer, 1, size, p->fp);
     ret = lzo1x_decompress_safe((const unsigned char *)inbuffer, offset, (unsigned char *)buffer, &outlen);
+	free(inbuffer);
     if(ret < 0)
         return 0;
     return outlen;
