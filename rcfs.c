@@ -51,8 +51,9 @@ char *print_timestamp(unsigned int tvalue)
 }
 
 typedef struct inode_ptr {
-    unsigned long        : 16; /* always 0 */
-    unsigned long flags  : 48; /* file permissions */
+    unsigned short int unkn0;
+    unsigned short int flags;
+    mode_t perms;              /* file permissions */
     unsigned int fname_addr;   /* filename offset */
     unsigned int phyoff;       /* file data offset */
     unsigned int size;         /* uncompressed file size */
@@ -85,23 +86,6 @@ typedef struct rcfs
     FILE *fp;
     inode_ptr_s *inodes;
 } rcfs_s;
-
-/*
- * Flags used by RCFS
- */
-#define RCFS_FILE       (1 << 31)
-#define RCFS_DIRECTORY  (1 << 30)
-#define RCFS_SPECIAL    (1 << 26)
-#define RCFS_R_USER     (1 << 24)
-#define RCFS_W_USER     (1 << 23)
-#define RCFS_X_USER     (1 << 22)
-#define RCFS_R_GROUP    (1 << 21)
-#define RCFS_W_GROUP    (1 << 20)
-#define RCFS_X_GROUP    (1 << 19)
-#define RCFS_R_OTHER    (1 << 18)
-#define RCFS_W_OTHER    (1 << 17)
-#define RCFS_X_OTHER    (1 << 16)
-//
 
 /*
  * Open rcfs image
@@ -214,23 +198,21 @@ void rcfs_list_files(rcfs_s *p)
         fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
         fread(filename, 1, 100, p->fp);
         printf("%c%c%c%c%c%c%c%c%c%c %s %6i %s\n",
-                (p->inodes[i].flags & RCFS_DIRECTORY)  ? 'd' : ' ',
-                (p->inodes[i].flags & RCFS_R_USER)     ? 'r' : '-',
-                (p->inodes[i].flags & RCFS_W_USER)     ? 'w' : '-',
-                (p->inodes[i].flags & RCFS_X_USER)     ? 'x' : '-',
-                (p->inodes[i].flags & RCFS_R_GROUP)    ? 'r' : '-',
-                (p->inodes[i].flags & RCFS_W_GROUP)    ? 'w' : '-',
-                (p->inodes[i].flags & RCFS_SPECIAL)    ? 's' : ((p->inodes[i].flags & RCFS_X_GROUP)  ? 'x' : '-'),
-                (p->inodes[i].flags & RCFS_R_OTHER)    ? 'r' : '-',
-                (p->inodes[i].flags & RCFS_W_OTHER)    ? 'w' : '-',
-                (p->inodes[i].flags & RCFS_X_OTHER)    ? 'x' : '-',
+                (p->inodes[i].perms & S_IFDIR)  ? 'd' : '-',
+                (p->inodes[i].perms & S_IRUSR)  ? 'r' : '-',
+                (p->inodes[i].perms & S_IWUSR)  ? 'w' : '-',
+                (p->inodes[i].perms & S_IXUSR)  ? 'x' : '-',
+                (p->inodes[i].perms & S_IRGRP)  ? 'r' : '-',
+                (p->inodes[i].perms & S_IWGRP)  ? 'w' : '-',
+                (p->inodes[i].perms & S_ISGID)  ? 's' : ((p->inodes[i].perms & S_IXGRP)  ? 'x' : '-'),
+                (p->inodes[i].perms & S_IROTH)  ? 'r' : '-',
+                (p->inodes[i].perms & S_IWOTH)  ? 'w' : '-',
+                (p->inodes[i].perms & S_IXOTH)  ? 'x' : '-',
                 print_timestamp(p->inodes[i].timestamp),
                 p->inodes[i].size,
                 filename);
 #if 0
-        if (p->inodes[i].flags & RCFS_FILE)
-            printf("file_id: %i ", (int)((p->inodes[i].flags & 0xFF00000000) >> 32));
-        printf("unique_id: 0x%04lx\n", (unsigned long)(p->inodes[i].flags & 0xFFFF));
+        printf("unique_id: 0x%04i\n", p->inodes[i].flags);
 #endif
     }
 }
@@ -296,15 +278,15 @@ int main(int argc, char *argv[])
     switch(cmd) {
         case PRINT_INFO:
             printf("fs-rcfs: -------- superblock information--------\n");
-            printf("size:        0x%08x\n", p->size);
-            printf("cbuflen:    0x%08x\n", p->cbuflen);
-            printf("data_off:    0x%08x\n", p->data_off);
-            printf("data_len:    0x%08x\n", p->data_len);
+            printf("size:         0x%08x\n", p->size);
+            printf("cbuflen:      0x%08x\n", p->cbuflen);
+            printf("data_off:     0x%08x\n", p->data_off);
+            printf("data_len:     0x%08x\n", p->data_len);
             printf("inode_off:    0x%08x\n", p->inode_off);
             printf("inode_len:    0x%08x\n", p->inode_len);
             printf("fname_off:    0x%08x\n", p->fname_off);
             printf("fname_len:    0x%08x\n", p->fname_len);
-            printf("inodes:        0x%08x\n", p->ninodes);
+            printf("inodes:       0x%08x\n", p->ninodes);
             break;
         case LIST_FILE:
             rcfs_list_files(p);
@@ -329,7 +311,7 @@ int main(int argc, char *argv[])
                 fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
                 fread(filename, 1, 100, p->fp);
                 sprintf(destination, "%s/%s", folder, filename);
-                if(p->inodes[i].flags & RCFS_DIRECTORY)
+                if(p->inodes[i].perms & S_IFDIR)
                 {
                     ext = strrchr(folder,'/');
                     if (!ext)
@@ -361,7 +343,7 @@ int main(int argc, char *argv[])
             int len = 0;
             int inode = rcfs_inode_lookup(p, filename);
             printf("INODE: %i\n", inode);
-            __uint8_t *fdata;
+            __uint8_t *fdata = NULL;
             FILE *outfile;
             if(!inode)
             {
