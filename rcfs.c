@@ -168,7 +168,7 @@ size_t rcfs_read_file(rcfs_s *p, __uint32_t inode_index, __uint8_t *buffer)
 
     fseek(p->fp, p->inodes[inode_index].phyoff, SEEK_SET);
     fread(&header_size, 1, sizeof(__uint32_t), p->fp);
-    num_chunks = ((header_size + (sizeof(__uint32_t) - 1)) / sizeof(__uint32_t)) - 1; 
+    num_chunks = ((header_size + (sizeof(__uint32_t) - 1)) / sizeof(__uint32_t)) - 1;
     readBytes = 0;
     for(i=0;i < num_chunks;i++)
     {
@@ -212,7 +212,8 @@ void rcfs_list_files(rcfs_s *p)
                 p->inodes[i].size,
                 filename);
 #if 0
-        printf("unique_id: 0x%04i\n", p->inodes[i].flags);
+        if (p->inodes[i].unkn3 || p->inodes[i].unkn4)
+            printf("unkn3: %i unkn4: %i \n", p->inodes[i].unkn3, p->inodes[i].unkn4);
 #endif
     }
 }
@@ -227,6 +228,9 @@ __uint32_t rcfs_inode_lookup(rcfs_s *p, char *_fname)
 
     for(i=0;i < p->ninodes; i++)
     {
+        // We probably don't want a symbolic link
+        if(p->inodes[i].perms & S_IFCHR)
+            continue;
         fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
         fread(filename, 1, 100, p->fp);
         if(strncmp(_fname, filename, strlen(_fname)) == 0)
@@ -308,6 +312,9 @@ int main(int argc, char *argv[])
             mkdir(folder, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
             for(i=0;i < p->ninodes; i++)
             {
+                // Skip symbolic links
+                if(p->inodes[i].perms & S_IFCHR)
+                    continue;
                 fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
                 fread(filename, 1, 100, p->fp);
                 sprintf(destination, "%s/%s", folder, filename);
@@ -342,7 +349,6 @@ int main(int argc, char *argv[])
         {
             int len = 0;
             int inode = rcfs_inode_lookup(p, filename);
-            printf("INODE: %i\n", inode);
             __uint8_t *fdata = NULL;
             FILE *outfile;
             if(!inode)
