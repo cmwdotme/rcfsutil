@@ -29,6 +29,7 @@ THE SOFTWARE.
 
 #define RCFS_MAGIC "r-c-f-s"
 #define RCFS_SUPERBLOCK_OFF 0x1020
+#define RCFS_COMPRESSED 0x800000
 
 #define EXTRACT_FILE 1
 #define LIST_FILE 2
@@ -160,62 +161,34 @@ size_t rcfs_read_chunk(rcfs_s *p, __uint8_t *buffer, size_t size, __uint32_t off
 /* 
  * Read and decompress each chunk of file
  */
-size_t rcfs_read_file(rcfs_s *p, __uint32_t inode_index, __uint8_t *buffer)
+size_t rcfs_read_file(rcfs_s *p, __uint32_t inode_index, __uint8_t *buffer, int compressed)
 {
     int readBytes, len, i;
     __uint32_t num_chunks, header_size;
     __uint32_t chunk_size, posOff = 0;
 
     fseek(p->fp, p->inodes[inode_index].phyoff, SEEK_SET);
-    fread(&header_size, 1, sizeof(__uint32_t), p->fp);
-    num_chunks = ((header_size + (sizeof(__uint32_t) - 1)) / sizeof(__uint32_t)) - 1;
-    readBytes = 0;
-    for(i=0;i < num_chunks;i++)
-    {
-
-        fseek(p->fp, p->inodes[inode_index].phyoff+sizeof(__uint32_t)+i*4, SEEK_SET);
-        fread(&chunk_size, 1, sizeof(chunk_size), p->fp);
-        fseek(p->fp, p->inodes[inode_index].phyoff+header_size+posOff, SEEK_SET);
-        len = rcfs_read_chunk(p, (buffer+readBytes), chunk_size, (chunk_size-posOff-header_size));
-        if(!len)
+    if(compressed) {
+      fread(&header_size, 1, sizeof(__uint32_t), p->fp);
+      num_chunks = ((header_size + (sizeof(__uint32_t) - 1)) / sizeof(__uint32_t)) - 1;
+      readBytes = 0;
+      for(i=0;i < num_chunks;i++)
+	{
+	  
+	  fseek(p->fp, p->inodes[inode_index].phyoff+sizeof(__uint32_t)+i*4, SEEK_SET);
+	  fread(&chunk_size, 1, sizeof(chunk_size), p->fp);
+	  fseek(p->fp, p->inodes[inode_index].phyoff+header_size+posOff, SEEK_SET);
+	  len = rcfs_read_chunk(p, (buffer+readBytes), chunk_size, (chunk_size-posOff-header_size));
+	  if(!len)
             break;
-        readBytes += len;
-        posOff += chunk_size-posOff-header_size;
+	  readBytes += len;
+	  posOff += chunk_size-posOff-header_size;
+	}
+    }
+    else {
+      readBytes = fread(buffer, 1, p->inodes[inode_index].size, p->fp);
     }
     return readBytes;
-}
-
-/*
- * List all files and directories in rcfs image
- */
-void rcfs_list_files(rcfs_s *p)
-{
-    int i;
-    char filename[1024] = {0};
-    
-    for(i=0;i < p->ninodes; i++)
-    {
-        fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
-        fread(filename, 1, 100, p->fp);
-        printf("%c%c%c%c%c%c%c%c%c%c %s %6i %s\n",
-                (p->inodes[i].perms & S_IFDIR)  ? 'd' : '-',
-                (p->inodes[i].perms & S_IRUSR)  ? 'r' : '-',
-                (p->inodes[i].perms & S_IWUSR)  ? 'w' : '-',
-                (p->inodes[i].perms & S_IXUSR)  ? 'x' : '-',
-                (p->inodes[i].perms & S_IRGRP)  ? 'r' : '-',
-                (p->inodes[i].perms & S_IWGRP)  ? 'w' : '-',
-                (p->inodes[i].perms & S_ISGID)  ? 's' : ((p->inodes[i].perms & S_IXGRP)  ? 'x' : '-'),
-                (p->inodes[i].perms & S_IROTH)  ? 'r' : '-',
-                (p->inodes[i].perms & S_IWOTH)  ? 'w' : '-',
-                (p->inodes[i].perms & S_IXOTH)  ? 'x' : '-',
-                print_timestamp(p->inodes[i].timestamp),
-                p->inodes[i].size,
-                filename);
-#if 0
-        if (p->inodes[i].unkn3 || p->inodes[i].unkn4)
-            printf("unkn3: %i unkn4: %i \n", p->inodes[i].unkn3, p->inodes[i].unkn4);
-#endif
-    }
 }
 
 /*
@@ -237,6 +210,81 @@ __uint32_t rcfs_inode_lookup(rcfs_s *p, char *_fname)
             return i;
     }
     return 0;
+}
+
+/*
+ * Recursivly parse a directory inode
+ */
+
+void rcfs_directory_inode(rcfs_s *p, inode_ptr_s inode, char *folder, int cmd) {
+  int offinodes = (inode.phyoff - p->inode_off) / sizeof(inode_ptr_s);
+  int ninodes = inode.size / sizeof(inode_ptr_s);
+  int i,len;
+  char* ext;
+  char filename[1024] = {0};
+  char destination[2048] = {0};
+  __uint8_t *fdata = NULL;
+  FILE *outfile;
+
+  mkdir(folder, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+  for(i=offinodes; i<offinodes+ninodes; i++) {
+    if(p->inodes[i].perms & S_IFCHR)
+      continue;
+    
+    fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
+    fread(filename, 1, 100, p->fp);
+    sprintf(destination, "%s/%s", folder, filename);
+    if(p->inodes[i].perms & S_IFDIR)
+      {
+	ext = strrchr(folder,'/');
+	if (!ext)
+	  ext = filename;
+	if (strlen(ext) > 1 && strcmp(ext,".") != 0 && strcmp(ext,"..") != 0)
+	  {
+	    if(cmd == DUMP_FILES) {
+	      mkdir(destination, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+	      printf("Creating %s\n", filename);
+	    }
+	    rcfs_directory_inode(p, p->inodes[i], destination, cmd);
+	  }
+	continue;
+      }
+    switch(cmd) {
+    case DUMP_FILES:
+      printf("Extracting %s...\n", filename);
+      fdata = malloc(p->inodes[i].size);
+      len = rcfs_read_file(p, i, fdata, p->inodes[i].perms & RCFS_COMPRESSED);
+      if(len > 0)
+	{
+	  outfile = fopen(destination, "w");
+	  fwrite(fdata, 1, len, outfile);
+	  fclose(outfile);
+	} 
+      else {
+	outfile = fopen(destination, "w");
+	fclose(outfile);
+	printf("Error extracting file\n");
+      }
+      free(fdata);
+      break;
+    case LIST_FILE:
+      printf("%c%c%c%c%c%c%c%c%c%c %s %6i %s\n",
+	     (p->inodes[i].perms & S_IFDIR)  ? 'd' : '-',
+	     (p->inodes[i].perms & S_IRUSR)  ? 'r' : '-',
+	     (p->inodes[i].perms & S_IWUSR)  ? 'w' : '-',
+	     (p->inodes[i].perms & S_IXUSR)  ? 'x' : '-',
+	     (p->inodes[i].perms & S_IRGRP)  ? 'r' : '-',
+	     (p->inodes[i].perms & S_IWGRP)  ? 'w' : '-',
+	     (p->inodes[i].perms & S_ISGID)  ? 's' : ((p->inodes[i].perms & S_IXGRP)  ? 'x' : '-'),
+	     (p->inodes[i].perms & S_IROTH)  ? 'r' : '-',
+	     (p->inodes[i].perms & S_IWOTH)  ? 'w' : '-',
+	     (p->inodes[i].perms & S_IXOTH)  ? 'x' : '-',
+	     print_timestamp(p->inodes[i].timestamp),
+	     p->inodes[i].size,
+	     destination);
+      break;
+    }
+  }
 }
 
 int main(int argc, char *argv[])
@@ -293,57 +341,19 @@ int main(int argc, char *argv[])
             printf("inodes:       0x%08x\n", p->ninodes);
             break;
         case LIST_FILE:
-            rcfs_list_files(p);
-            break;
+	  rcfs_directory_inode(p, p->inodes[0], "", cmd);
+	  break;
         case DUMP_FILES:
         {
-            int i,len;
             char* ext;
-            char filename[1024] = {0};
             char folder[1024] = {0};
-            char destination[2048] = {0};
-            __uint8_t *fdata = NULL;
-            FILE *outfile;
-
+	    
             strcpy(folder, argv[2]);
             ext = strrchr(folder,'.');
             if (ext)
                 folder[ext-folder] = '\0';
-            mkdir(folder, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-            for(i=0;i < p->ninodes; i++)
-            {
-                // Skip symbolic links
-                if(p->inodes[i].perms & S_IFCHR)
-                    continue;
-                fseek(p->fp, p->inodes[i].fname_addr, SEEK_SET);
-                fread(filename, 1, 100, p->fp);
-                sprintf(destination, "%s/%s", folder, filename);
-                if(p->inodes[i].perms & S_IFDIR)
-                {
-                    ext = strrchr(folder,'/');
-                    if (!ext)
-                        ext = filename;
-                    if (strlen(ext) > 1 && strcmp(ext,".") != 0 && strcmp(ext,"..") != 0)
-                    {
-                        mkdir(destination, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-                        printf("Creating %s\n", filename);
-                    }
-                    continue;
-                }
-                printf("Extracting %s...\n", filename);
-                fdata = malloc(p->inodes[i].size);
-                len = rcfs_read_file(p, i, fdata);
-                if(len > 0)
-                {
-                    outfile = fopen(destination, "w");
-                    fwrite(fdata, 1, len, outfile);
-                    fclose(outfile);
-                } else {
-                    printf("Failed to decompress file\n");
-                }
-            }
-            free(fdata);
-            break;
+	    rcfs_directory_inode(p, p->inodes[0], folder, cmd);
+	    break;
         }
         case EXTRACT_FILE:
         {
@@ -359,7 +369,7 @@ int main(int argc, char *argv[])
                 break;
             }
             fdata = malloc(p->inodes[inode].size);
-            len = rcfs_read_file(p, inode, fdata);
+            len = rcfs_read_file(p, inode, fdata, p->inodes[inode].perms & RCFS_COMPRESSED);
             if(len > 0)
             {
                 outfile = fopen(filename, "w");
